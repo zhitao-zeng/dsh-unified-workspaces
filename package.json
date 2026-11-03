@@ -1,0 +1,64 @@
+{
+  "name": "@zhitao-zeng/dsh-unified-workspaces",
+  "version": "0.5.0",
+  "description": "DSH 本机与多台 SSH 远端统一工作区、原生会话和常驻视图",
+  "private": true,
+  "type": "module",
+  "main": "./lib/index.js",
+  "exports": {
+    ".": "./lib/index.js",
+    "./client": "./lib/client.js",
+    "./package.json": "./package.json"
+  },
+  "files": [
+    "lib/index.js",
+    "lib/catalog.js",
+    "lib/appearance.js",
+    "lib/manage.js",
+    "lib/proxy.js",
+    "lib/client.js",
+    "lib/boot.js",
+    "cordis.patch.yml",
+    "README.md",
+    "LICENSE",
+    "THIRD_PARTY_NOTICES.md",
+    "lib/embed.js",
+    "lib/embed-prelude.js",
+    "lib/embed-companion.js",
+    "reference-LICENSE",
+    "lib/config.js",
+    "lib/credential.js",
+    "scripts/ssh-browser-cookie.py",
+    "config.example.json",
+    "licenses/",
+    "docs/"
+  ],
+  "engines": {
+    "node": ">=24",
+    "dsh": "0.2.1-rc.5"
+  },
+  "dependencies": {
+    "ws": "8.22.0"
+  },
+  "dsh": {
+    "bundle": {
+      "patch": "./cordis.patch.yml"
+    },
+    "client": {
+      "platform": "web",
+      "immediately": true,
+      "inject": [
+        "@deepseek-ai/dsh-client-connection"
+      ]
+    }
+  },
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/zhitao-zeng/dsh-unified-workspaces.git"
+  },
+  "scripts": {
+    "build": "node build-client.mjs",
+    "test": "node --test test/*.test.mjs"
+  }
+}

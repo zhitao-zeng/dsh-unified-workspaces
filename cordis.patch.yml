@@ -1,0 +1,3 @@
+- insert:
+    - id: dsh-unified-workspaces
+      name: '@zhitao-zeng/dsh-unified-workspaces'
