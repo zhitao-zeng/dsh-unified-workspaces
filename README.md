@@ -16,6 +16,7 @@ Unified local and SSH remote workspaces for DeepSeek Harness. Each remote keeps 
 - 桌面/本机浏览器为每台远端保留一个按需加载的原生页面。跨主机往返只改变显示，不重建已经连接的页面。
 - 远端使用自己的原生会话控制器、工作目录、模型与工具；不会把远端会话 ID 交给本机控制器。
 - 外观和语言复用本机设置；模型、凭据和其他设置仍属于各自服务器。
+- 常驻远端页面继承外层 App 当前实际语言；外层选择“跟随系统”时也不会误用嵌入浏览器的默认语言。
 - 使用现有 SSH 别名、端口转发、ProxyJump 或自建中继，不依赖特定 VPN。
 
 首次嵌入需要远端至少有一个已有的非空白会话，用于原生界面安全恢复。全新空白 Host 请先通过其原生界面初始化会话；插件不会为了测试或加载目录自动创建会话。
@@ -34,7 +35,7 @@ npm run build
 npm test
 npm pack
 
-dsh plugin --profile desktop add "file:$(pwd)/zhitao-zeng-dsh-unified-workspaces-0.5.0.tgz"
+dsh plugin --profile desktop add "file:$(pwd)/zhitao-zeng-dsh-unified-workspaces-0.5.1.tgz"
 ```
 
 然后重新打开 DSH App。若 `dsh` 不在 PATH，使用官方桌面 App 自带的 `Contents/Resources/runtime/cli/bin/dsh`；按实际 App 安装目录填写其完整路径。
@@ -126,6 +127,12 @@ python3 scripts/ssh-browser-cookie.py \
 当前同步处理注册表中的插件安装包。新包在目标保持关闭，目标已有包的启用状态与设置保持原值；可点击「打开目标主机插件管理」进入该主机的原生管理页面，再启用和配置。它会复用远端常驻页面，保留原来的会话选择。
 
 同版本显示已同步；已有不同版本交给目标原生插件管理维护。机器专属组件、本地 tarball、远程访问及隧道插件不跨主机复制。账号、API Key 和源插件设置不在包同步范围内。目标需启用官方热重载，存在运行会话时先保留计划。若官方返回需要重启或构建审批，界面显示实际结果并停止后续包，由用户在维护时处理。
+
+### Prompt 补全
+
+支持 `dsh-prompt-predict` 的桌面常驻页面与手机转发。远端需要安装并启用补全插件；手机还需要外层 Mac 安装同版本的客户端。插件的配置、会话历史和模型调用归所选主机所有，远端会话 ID 不会交给本机补全后端。
+
+手机仅为这个已支持的补全插件保留客户端模块，并将其同源请求转发到所选主机的固定路径，沿用现有设备配对。建议仅在输入框为空、会话空闲且已有历史时出现；`Tab` 采纳到草稿，发送消息仍由用户操作。
 
 ## 手机与自建 HTTPS 入口
 

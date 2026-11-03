@@ -68,5 +68,6 @@
   "@deepseek-ai/dsh-client-ui-workspace",
   "@deepseek-ai/dsh-cordis-client-runner",
   "@deepseek-ai/dsh-session-log-export",
-  "@deepseek-ai/dsh-typert-registry"
+  "@deepseek-ai/dsh-typert-registry",
+  "dsh-prompt-predict"
 ]

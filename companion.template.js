@@ -32,6 +32,11 @@ window.__ModuleLoader__.load({
             } else if (message.type === 'plugin-manager/open') {
               ctx.layout.selectPanel('plugins');
             } else if (message.type === 'appearance/reload') {
+              if (message.locale !== undefined) {
+                const bridge = globalThis.__DSH_UNIFIED_PARENT_LOCALE__;
+                if (!bridge || typeof bridge.update !== 'function') throw new Error('远程工作区语言桥接尚未就绪。');
+                bridge.update(message.locale);
+              }
               await ctx.configForms?.describe?.().load();
               // Update styles without navigating or replacing this Client Context.
               if (typeof message.css === 'string' && message.css.length <= 32000) {

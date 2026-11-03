@@ -1,4 +1,4 @@
-function createPersistentEmbed({ hostId, fetch: requestFetch, changed }) {
+function createPersistentEmbed({ hostId, fetch: requestFetch, changed, getLocale }) {
   const endpoint = hostApiPrefix(hostId) + '/embed/';
   let metadata, frame, port, ready = false, opening, disposed = false, sequence = 0, invalidLease = false;
   let handshakeTimer, handshakeReject, leaseTimer;
@@ -71,7 +71,8 @@ function createPersistentEmbed({ hostId, fetch: requestFetch, changed }) {
     opening = (async () => {
       if (metadata && expired()) discardStartup();
       if (!metadata) {
-        const value = await api('bootstrap', { sessionId });
+        const locale = getLocale?.();
+        const value = await api('bootstrap', { sessionId, ...(locale ? { locale } : {}) });
         if (disposed) { await api('close', { frameId: value.frameId, controlToken: value.controlToken }).catch(() => {}); return; }
         const url = new URL(value.frameUrl);
         if (value.frameOrigin !== url.origin || url.protocol !== 'http:' || !['127.0.0.1', 'localhost', '[::1]'].includes(url.hostname) || typeof value.frameId !== 'string' || typeof value.controlToken !== 'string') throw new Error('远程工作区入口无效。');
@@ -103,7 +104,7 @@ function createPersistentEmbed({ hostId, fetch: requestFetch, changed }) {
     attach(element) { frame = element; },
     async open(sessionId) { await ensure(sessionId); if (disposed) return; const result = await request('session/open', { sessionId }); frame?.focus?.(); return result; },
     async openPlugins(sessionId) { await ensure(sessionId); if (disposed) return; const result = await request('plugin-manager/open'); frame?.focus?.(); return result; },
-    appearance(css) { if (ready) request('appearance/reload', { css }).catch(() => {}); },
+    appearance(css, locale) { if (ready) request('appearance/reload', { css, ...(locale ? { locale } : {}) }).catch(() => {}); },
     focus() { frame?.focus?.(); },
     dispose() {
       disposed = true; clearTimeout(handshakeTimer); clearInterval(leaseTimer); handshakeReject?.(new Error('工作台已关闭。'));

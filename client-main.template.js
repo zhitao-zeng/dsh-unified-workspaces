@@ -61,7 +61,7 @@ window.__ModuleLoader__.load({
             if (!validHostId(hostId, false) || !snapshot.hosts.some(host => host.id === hostId)) throw new Error('未配置此远端主机。');
             let bridge = persistentBridges.get(hostId);
             if (!bridge) {
-              bridge = createPersistentEmbed({ hostId, fetch: requestFetch, changed: value => {
+              bridge = createPersistentEmbed({ hostId, fetch: requestFetch, getLocale: currentLocale, changed: value => {
                 if (disposed) return;
                 const old = snapshot.remotes[hostId] || {};
                 const next = { ...old, ...('metadata' in value ? { embed: value.metadata || null } : {}), ...('ready' in value ? { ready: value.ready === true } : {}), ...(typeof value.sessionId === 'string' ? { sessionId: value.sessionId } : {}), ...('notice' in value ? { notice: value.notice || '' } : {}) };
@@ -471,6 +471,7 @@ window.__ModuleLoader__.load({
               emit({ ...snapshot, activeTarget: hostId });
               ui.layout.selectPanel(null);
               await bridge.openPlugins(row.sessionId);
+              syncAppearance();
             } else {
               sessionStorage.setItem('dsh-unified-pending-panel', JSON.stringify({ host: hostId, panel: 'plugins' }));
               sessionStorage.setItem(pendingKey, JSON.stringify({ host: hostId, sessionId: row.sessionId }));
@@ -624,7 +625,15 @@ window.__ModuleLoader__.load({
             const values = getComputedStyle(document.body || document.documentElement);
             const declarations = [];
             for (let index = 0; index < values.length; index++) { const name = values[index]; if (name.startsWith('--dsw-') || name.startsWith('--ds-')) declarations.push(name + ':' + values.getPropertyValue(name)); }
-            for (const [hostId, bridge] of persistentBridges) if (snapshot.remotes[hostId]?.ready) bridge.appearance('body,body[data-ds-dark-theme]{' + declarations.join(';') + '}');
+            const locale = currentLocale();
+            for (const [hostId, bridge] of persistentBridges) if (snapshot.remotes[hostId]?.ready) bridge.appearance('body,body[data-ds-dark-theme]{' + declarations.join(';') + '}', locale);
+          }
+          function currentLocale() {
+            const active = ui.locale?.getSnapshot?.()?.active;
+            const language = value => typeof value === 'string' && value.length <= 64 && /^[A-Za-z]{2,8}(?:-[A-Za-z0-9]{1,8}){0,7}$/.test(value);
+            if (!language(active)) return undefined;
+            const browser = Array.isArray(globalThis.navigator?.languages) ? globalThis.navigator.languages : [];
+            return { active, languages: [...new Set([active, ...browser.filter(language)])].slice(0, 16) };
           }
           function PersistentOverlay() {
             const catalog = React.useSyncExternalStore(state.subscribe, state.getSnapshot, state.getSnapshot);
@@ -656,10 +665,11 @@ window.__ModuleLoader__.load({
           if (persistentMode) {
             ui.slots.inject('shell.overlay', () => ui.slots.register({ name: 'shell.overlay', id: 'dsh-unified-persistent-frame' }, PersistentOverlay));
             ui.effect(() => {
+              const stopLocale = ui.locale?.subscribe?.(syncAppearance);
               const observer = globalThis.MutationObserver ? new MutationObserver(syncAppearance) : undefined;
               observer?.observe(document.documentElement, { attributes: true, attributeFilter: ['class', 'style', 'data-ds-dark-theme', 'data-theme'] });
               if (document.body) observer?.observe(document.body, { attributes: true, attributeFilter: ['class', 'style', 'data-ds-dark-theme', 'data-theme'] });
-              return () => observer?.disconnect();
+              return () => { stopLocale?.(); observer?.disconnect(); };
             }, 'Remote appearance follows local settings');
           }
           const Icon = () => h('span', { 'aria-hidden': true, style: { fontSize: 16 } }, '▤');

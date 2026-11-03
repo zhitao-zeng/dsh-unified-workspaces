@@ -26,6 +26,7 @@ test('routing binds API, appearance and both native mux variants to the chosen r
     assert(validHostId(host,false));
     const api=hostApiPrefix(host);
     for (const path of ['/api/session/list','/remote/api/session/list']) assert.equal(new URL(routeUrl(path,'https://remote.example.test/',host)).pathname,(path.startsWith('/remote/')?'/remote':'')+api+'/native/session/list');
+    for (const path of ['/dsh-prompt-predict/status?sessionId=shared-id','/remote/dsh-prompt-predict/suggest']) assert.equal(new URL(routeUrl(path,'https://remote.example.test/',host)).pathname,(path.startsWith('/remote/')?'/remote':'')+api+'/native/_host/dsh-prompt-predict/'+(path.includes('/suggest')?'suggest':'status'));
     for (const path of ['/api/remote.mux','/remote/api/remote.mux']) assert.equal(new URL(muxPath(path,device,host),'https://remote.example.test').pathname,'/dsh-unified/hosts/'+host+'/remote.mux');
     const target=appearanceRoute('/api/settings/describe','https://remote.example.test/','',host);
     assert.equal(new URL(target).pathname,api+'/appearance/describe');
@@ -45,6 +46,8 @@ test('phone boot routes independently to arbitrary hosts, preserves pairing and 
     const req=records.find(row=>row.type==='http');
     assert.equal(new URL(req.url).pathname,'/remote/api/dsh-unified/hosts/'+host+'/native/session/list');
     assert.equal(new Headers(req.options.headers).get('x-dsh-remote-device'),device);
+    await env.fetch('./dsh-prompt-predict/suggest',{method:'POST',headers:{'content-type':'application/json','x-dsh-locale':'zh'},body:JSON.stringify({sessionId:'remote-existing'})});
+    const suggestion=records.at(-1);assert.equal(new URL(suggestion.url).pathname,'/remote/api/dsh-unified/hosts/'+host+'/native/_host/dsh-prompt-predict/suggest');assert.equal(new Headers(suggestion.options.headers).get('x-dsh-remote-device'),device);
     for (const path of ['/api/remote.mux','/remote/api/remote.mux']) {
       new env.WebSocket('wss://remote.example.test'+path);
       const out=new URL(records.at(-1).url);assert.equal(out.pathname,'/dsh-unified/hosts/'+host+'/remote.mux');assert.equal(out.searchParams.get('device'),device);
