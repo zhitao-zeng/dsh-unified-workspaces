@@ -1,6 +1,8 @@
 (() => {
   /* ROUTING_HELPERS */
   const w = globalThis;
+  try { migrateLegacySelection(w, w.__DSH_UNIFIED_BOOT_CONFIG__); }
+  catch { throw new Error('旧版远端选择尚未安全迁移，请核对 legacyHostId 配置后重试。'); }
   const allowedClientIds = /* HOST_CLIENT_IDS */;
   const pageOrigin = new URL(document.baseURI);
   const persistentMac = !w.__DSH_EMBED_BOOT__ && (pageOrigin.protocol === 'dsh-app:' || ['http:', 'https:'].includes(pageOrigin.protocol) && ['127.0.0.1', 'localhost', '[::1]'].includes(pageOrigin.hostname));

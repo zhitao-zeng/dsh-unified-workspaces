@@ -28,6 +28,7 @@
     "reference-LICENSE",
     "lib/config.js",
     "lib/credential.js",
+    "lib/legacy.js",
     "scripts/ssh-browser-cookie.py",
     "config.example.json",
     "licenses/",

@@ -63,6 +63,8 @@ ssh -N -T -o ExitOnForwardFailure=yes -L 127.0.0.1:43082:127.0.0.1:3080 worker-b
 
 这两条命令需要各自保持运行。长期转发可由你已有的 SSH 或系统服务管理，本插件不创建后台 SSH 服务。自建中继只需配置在对应 SSH 别名中。
 
+从旧定制版 0.4.1 迁移时，可在配置顶层增加 `"legacyHostId": "你的远端ID"`。它只把旧手机通道和旧主机选择映射到这台已配置服务器，仍使用同一授权与上游；不配置时不启用旧通道。旧手机页面刷新后改用新的通用路由。
+
 配置示例：
 
 ```json
@@ -90,7 +92,7 @@ ssh -N -T -o ExitOnForwardFailure=yes -L 127.0.0.1:43082:127.0.0.1:3080 worker-b
 
 ### 凭据辅助程序
 
-随附脚本按 POSIX SSH 服务端验证，需要本机 Python 3、已有 SSH 访问，以及远端已经安装的 Python 3 和 PyYAML。其他服务端可提供自定义 `credentialCommand`；Windows SSH 及其 Shell 尚未实机验证。它从指定远端 DSH Home 读取**已有**浏览器授权材料，在远端签发五分钟有效的凭据，再验证现有 DSH listener。签名密钥留在远端，不复制到本机。
+随附脚本按 POSIX SSH 服务端验证，需要本机 Python 3、已有 SSH 访问，以及远端已经安装的 Python 3 和 PyYAML。其他服务端可提供自定义 `credentialCommand`；Windows SSH 及其 Shell 尚未实机验证。它从指定远端 DSH Home 读取**已有**浏览器授权材料，在远端签发五分钟有效的凭据，再验证现有 DSH listener。签名密钥留在远端，不复制到本机。插件允许最多两分钟的有限时钟偏差，凭据本身仍最多有效五分钟，最终签名和过期校验由远端 DSH 执行。
 
 可以先只做状态检查：
 

@@ -13,6 +13,8 @@ import { createCatalogHandler } from '../lib/catalog.js';
 import { createManagementHandler } from '../lib/manage.js';
 import { createProxy } from '../lib/proxy.js';
 import { createEmbedService } from '../lib/embed.js';
+import { createAppearanceHandler } from '../lib/appearance.js';
+import { registerLegacyRoutes } from '../lib/legacy.js';
 
 const listen = async server => { server.listen(0, '127.0.0.1'); await once(server, 'listening'); return 'http://127.0.0.1:' + server.address().port; };
 const closeServer = async server => { server.closeAllConnections?.(); if (server.listening) await new Promise(resolve => server.close(resolve)); };
@@ -39,6 +41,8 @@ test('configuration accepts N explicit loopback sources, rejects command/identit
   assert.deepEqual(parseConfig({ version: 1, hosts: [row('alpha'), row('beta')] }).hosts.map(x => x.id), ['alpha', 'beta']);
   for (const id of ['mac', '__proto__', 'constructor', 'prototype', '../host', 'bad/id', '']) assert.throws(() => parseConfig({ version: 1, hosts: [row(id)] }));
   assert.throws(() => parseConfig({ version: 1, hosts: [row('alpha'), row('alpha')] }));
+  assert.equal(parseConfig({ version: 1, hosts: [row('alpha')], legacyHostId: 'alpha' }).legacyHostId, 'alpha');
+  for (const legacyHostId of ['missing', '__proto__', 'mac']) assert.throws(() => parseConfig({ version: 1, hosts: [row('alpha')], legacyHostId }));
   assert.throws(() => parseConfig({ version: 1, hosts: [{ ...row('alpha'), credentialCommand: ['python3'] }] }));
   for (const origin of ['https://127.0.0.1:4000', 'http://example.test:4000', 'http://user@127.0.0.1:4000', 'http://127.0.0.1:4000/path', 'http://127.0.0.1:4000?q=1', 'http://127.0.0.1:4000#x']) assert.throws(() => validateOrigin(origin));
   assert.equal(validateOrigin('http://[::1]:43081'), 'http://[::1]:43081');
@@ -76,6 +80,11 @@ test('credential caches are per source and bounded by authority and five-minute 
   assert.throws(() => validateCredential(signedFixture(a.origin), b.origin));
   assert.throws(() => validateCredential(signedFixture(a.origin, Date.now(), 600_000), a.origin));
   assert.throws(() => validateCredential(signedFixture(a.origin, Date.now() - 400_000), a.origin));
+  const clock = Date.now();
+  assert.doesNotThrow(() => validateCredential(signedFixture(a.origin, clock + 54_000), a.origin, clock));
+  assert.doesNotThrow(() => validateCredential(signedFixture(a.origin, clock + 120_000), a.origin, clock));
+  assert.throws(() => validateCredential(signedFixture(a.origin, clock + 120_001), a.origin, clock));
+  assert.throws(() => validateCredential(signedFixture(a.origin, clock + 54_000, 300_001), a.origin, clock));
   ca.close(); cb.close(); await assert.rejects(ca());
 });
 
@@ -135,12 +144,21 @@ test('two remote Hosts with colliding IDs retain independent catalogs, writes, p
       const routes = routesForHost(host.id);
       return [host.id, { routes, proxy: createProxy({ origin: host.origin, httpPrefix: routes.native, muxPath: routes.mux,
         authorize, credential: host.credential, ready: async () => true }),
+      appearance: createAppearanceHandler({ origin: host.origin, authorize, credential: host.credential, connection, gateway }),
       embed: createEmbedService({ hostId: host.id, origin: host.origin, authorizeOwner: authorize, credential: host.credential,
         connection, gateway, WebSocketImpl: WebSocket, WebSocketServerImpl: WebSocketServer,
         loadClient: () => ({ prelude: '// mock prelude', companion: '// mock companion' }) }) }];
     }));
+    const oldHttp = [], oldMux = new Map();
+    const closeLegacy = registerLegacyRoutes({ effect: fn => fn(), webServer: {
+      register: entry => { oldHttp.push(entry); return () => {}; },
+      registerUpgrade: entry => { oldMux.set(entry.path, entry.handler); return () => {}; },
+    } }, { remote: { ...remotes[0], ...services.get('alpha'), status: (req, res) => { req.resume(); res.end('{}'); } },
+      authorize, connection, gateway, WebSocketImpl: WebSocket });
     parent = http.createServer((req, res) => {
       const path = new URL(req.url, 'http://127.0.0.1').pathname;
+      const old = oldHttp.find(entry => entry.kind === 'exact' ? path === entry.path : path.startsWith(entry.path));
+      if (old) return old.handler(req, res);
       if (path === '/api/dsh-unified/catalog') return catalog(req, res);
       if (path.startsWith('/api/dsh-unified/manage/')) return management(path.split('/').at(-1), req, res);
       for (const service of services.values()) {
@@ -150,6 +168,8 @@ test('two remote Hosts with colliding IDs retain independent catalogs, writes, p
       req.resume(); res.writeHead(404).end();
     });
     parent.on('upgrade', (req, socket, head) => {
+      const old = oldMux.get(new URL(req.url, 'http://127.0.0.1').pathname);
+      if (old) return old(req, socket, head);
       for (const service of services.values()) if (new URL(req.url, 'http://127.0.0.1').pathname === service.routes.mux) return service.proxy.upgrade(req, socket, head);
       socket.end('HTTP/1.1 404 Not Found\r\nConnection: close\r\n\r\n');
     });
@@ -163,6 +183,25 @@ test('two remote Hosts with colliding IDs retain independent catalogs, writes, p
     assert(!JSON.stringify(catalogResponse).includes('cookie-alpha'));
     assert(!JSON.stringify(catalogResponse).includes(remotes[0].origin));
     assert.equal(localPeers, 0);
+    const legacyCatalog = await (await request('/api/gpu16-entry/catalog')).json();
+    assert.deepEqual(legacyCatalog.hosts.map(host => host.id), ['mac', 'gpu16']);
+    assert.equal(legacyCatalog.hosts[1].items[0].fixtureHost, 'alpha');
+    assert.equal((await request('/api/gpu16-entry/catalog', undefined, { authorization: '' })).status, 403);
+    const legacyNative = await (await request('/api/gpu16-native/session/list', {
+      type: 'client-request', rpcId: 'old-phone', method: 'session/list', payload: { args: {} },
+    })).json();
+    assert.equal(legacyNative.result.value.items[0].fixtureHost, 'alpha');
+    assert.equal((await request('/api/gpu16-native/session/list', {}, { authorization: '' })).status, 403);
+    assert.equal((await request('/api/gpu16-native-evil/session/list', {})).status, 404);
+    const oldAppearance = await (await request('/api/gpu16-entry/appearance/describe', {
+      type: 'client-request', rpcId: 'old-appearance', method: 'settings/describe', payload: { args: {} },
+    })).json();
+    assert.equal(oldAppearance.result.value.namespaces.find(row => row.ns === 'providers').value.owner, 'alpha');
+    assert.equal((await request('/api/gpu16-entry/appearance/describe', {}, { authorization: '' })).status, 403);
+    const oldCarrier = new WebSocket(parentOrigin.replace('http:', 'ws:') + '/gpu16-native/remote.mux', { headers });
+    await once(oldCarrier, 'open'); const oldHistory = once(oldCarrier, 'message');
+    oldCarrier.send(JSON.stringify({ type: 'open', streamId: 'old-phone-history', endpoint: 'session/follow', payload: { args: {} } }));
+    assert.equal(JSON.parse((await oldHistory)[0].toString()).value.source, 'alpha'); oldCarrier.close();
     for (const host of remotes) {
       const result = await (await request('/api/dsh-unified/manage/workspace-create', { host: host.id, path: '/srv/' + host.id, requestId: 'same-fixture-request-001' })).json();
       assert.equal(result.value.workspace.title, host.id);
@@ -232,7 +271,8 @@ test('two remote Hosts with colliding IDs retain independent catalogs, writes, p
     assert.equal((await request(services.get('beta').routes.embed + '/close', { frameId: frames[0].frameId, controlToken: frames[0].controlToken, parentOrigin }, { 'x-dsh-embed-parent': parentOrigin })).status, 403);
     assert.equal((await request(services.get('alpha').routes.embed + '/close', { frameId: frames[0].frameId, controlToken: frames[0].controlToken, parentOrigin }, { 'x-dsh-embed-parent': parentOrigin })).status, 200);
     assert.equal((await fetch(frames[1].frameOrigin + api, { method: 'POST', body, headers: { 'x-dsh-embed-grant': frames[1].grant } })).status, 200);
-    for (const service of services.values()) { service.embed.close(); service.proxy.close(); }
+    closeLegacy();
+    for (const service of services.values()) { service.embed.close(); service.proxy.close(); service.appearance.close(); }
     catalog.close(); management.close();
   } finally {
     for (const socket of sockets) socket.terminate();

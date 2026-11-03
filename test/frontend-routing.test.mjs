@@ -5,9 +5,9 @@ import vm from 'node:vm';
 import {validHostId, routeUrl, muxPath, appearanceRoute, hostApiPrefix, absoluteWorkspacePath} from '../lib/transport.js';
 const boot = fs.readFileSync(new URL('../lib/boot.js', import.meta.url), 'utf8');
 const device = 'fixture-device-abcdefghijklmnop';
-function browser(host, page = 'https://remote.example.test/pair-app', storageEntries = []) {
+function browser(host, page = 'https://remote.example.test/pair-app', storageEntries = [], bootConfig, nativeSelection) {
   const records = [], storage = new Map([['dsh-unified-host', host], ['dsh-remote-device', device], ...storageEntries]);
-  const nativeStorage = new Map();
+  const nativeStorage = new Map(nativeSelection ? [['dsh.sessions.current', JSON.stringify(nativeSelection)]] : []);
   class Socket { constructor(url) { records.push({type:'socket',url:String(url)}); } }
   const env = {URL, Request, Response, Headers, AbortSignal, MessageEvent, TransformStream, TextEncoder, TextDecoder,
     location:new URL(page), document:{baseURI:page},
@@ -17,6 +17,7 @@ function browser(host, page = 'https://remote.example.test/pair-app', storageEnt
     WebSocket:Socket,
     __DSH_BOOT__:{rev:'fixture',entries:[{id:'@deepseek-ai/dsh-api-gateway'},{id:'@zhitao-zeng/dsh-unified-workspaces'},{id:'unrelated-plugin'}],batches:[{entries:['@deepseek-ai/dsh-api-gateway','@zhitao-zeng/dsh-unified-workspaces','unrelated-plugin']}]},
   };
+  env.__DSH_UNIFIED_BOOT_CONFIG__=bootConfig;
   env.window=env; vm.createContext(env); vm.runInContext(boot,env);
   return {env,records,storage,nativeStorage};
 }
@@ -64,4 +65,25 @@ test('desktop startup restores only local selection; phone preserves qualified i
 test('workspace paths accept native POSIX, drive and UNC absolutes while rejecting drive-relative paths',()=>{
   for(const path of ['/srv/project','C:\\projects\\app','D:/projects/app','\\\\server\\share\\project']) assert.equal(absoluteWorkspacePath(path),true,path);
   for(const path of ['relative','C:relative','\\relative','/bad\0name','']) assert.equal(absoluteWorkspacePath(path),false,path);
+});
+
+
+test('legacy phone and desktop selections migrate only to an explicitly configured remote',()=>{
+  const old=[['gpu16-native-host','gpu16'],['gpu16-native-selection-by-host',JSON.stringify({mac:{sessionId:'local-existing'},gpu16:{sessionId:'remote-existing'}})]];
+  const config={hostIds:['alpha','beta'],legacyHostId:'alpha'};
+  const phone=browser(null,'https://remote.example.test/pair-app',old,config,{sessionId:'remote-existing'});
+  assert.equal(phone.storage.get('dsh-unified-host'),'alpha');
+  assert.equal(phone.env.__DSH_UNIFIED_REMOTE_BOOT__.selectedHost,'alpha');
+  assert.equal(JSON.parse(phone.nativeStorage.get('dsh.sessions.current')).sessionId,'remote-existing');
+  new phone.env.WebSocket('wss://remote.example.test/remote/api/remote.mux');
+  assert.equal(new URL(phone.records.at(-1).url).pathname,'/dsh-unified/hosts/alpha/remote.mux');
+  const desktop=browser(null,'dsh-app://app/',old,config,{sessionId:'remote-existing'});
+  assert.equal(desktop.storage.get('dsh-unified-host'),'mac');
+  assert.equal(JSON.parse(desktop.nativeStorage.get('dsh.sessions.current')).sessionId,'local-existing');
+  assert.equal(desktop.env.__DSH_UNIFIED_REMOTE_BOOT__,undefined);
+  assert.throws(()=>browser(null,'https://remote.example.test/pair-app',old,undefined,{sessionId:'remote-existing'}));
+  assert.throws(()=>browser(null,'https://remote.example.test/pair-app',old,{hostIds:['beta'],legacyHostId:'alpha'},{sessionId:'remote-existing'}));
+  const current=browser('beta','https://remote.example.test/pair-app',old,config,{sessionId:'beta-existing'});
+  assert.equal(current.storage.get('dsh-unified-host'),'beta');
+  assert.equal(current.env.__DSH_UNIFIED_LEGACY_MIGRATED__,undefined);
 });
