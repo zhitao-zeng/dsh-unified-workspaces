@@ -17,18 +17,20 @@ window.__ModuleLoader__.load({
           return !!(list && list.phase === 'ready' && (Object.prototype.hasOwnProperty.call(list.byId || {}, id) || Array.isArray(list.ids) && list.ids.includes(id) || Array.isArray(list.items) && list.items.some(item => item.sessionId === id)));
         }
         async function command(message) {
-          if (!message || typeof message.id !== 'string' || message.id.length > 128 || !['session/open', 'status', 'appearance/reload'].includes(message.type)) return;
+          if (!message || typeof message.id !== 'string' || message.id.length > 128 || !['session/open', 'status', 'appearance/reload', 'plugin-manager/open'].includes(message.type)) return;
           if (requestInFlight && message.type === 'session/open') { send({ id: message.id, ok: false, error: '远程工作区正在打开会话，请稍后重试。' }); return; }
           try {
             if (message.type === 'session/open') {
               if (!validSession(message.sessionId)) throw new Error('会话标识无效。');
               requestInFlight = true;
-              await ctx.sessions?.refresh?.();
+              if (!knownSession(message.sessionId)) await ctx.sessions?.refresh?.();
               if (disposed) return;
               if (!knownSession(message.sessionId)) throw new Error('远端中没有找到此会话，请刷新列表后重试。');
               ctx.layout.selectPanel(null);
               await ctx.uiWorkspace.openSession(message.sessionId);
               document.querySelector('[contenteditable="true"],textarea')?.focus?.();
+            } else if (message.type === 'plugin-manager/open') {
+              ctx.layout.selectPanel('plugins');
             } else if (message.type === 'appearance/reload') {
               await ctx.configForms?.describe?.().load();
               // Update styles without navigating or replacing this Client Context.

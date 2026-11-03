@@ -102,6 +102,7 @@ function createPersistentEmbed({ hostId, fetch: requestFetch, changed }) {
     status,
     attach(element) { frame = element; },
     async open(sessionId) { await ensure(sessionId); if (disposed) return; const result = await request('session/open', { sessionId }); frame?.focus?.(); return result; },
+    async openPlugins(sessionId) { await ensure(sessionId); if (disposed) return; const result = await request('plugin-manager/open'); frame?.focus?.(); return result; },
     appearance(css) { if (ready) request('appearance/reload', { css }).catch(() => {}); },
     focus() { frame?.focus?.(); },
     dispose() {

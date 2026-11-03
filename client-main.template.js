@@ -3,6 +3,7 @@ window.__ModuleLoader__.load({
   factory(require) {
     /* ROUTING_HELPERS */
     /* PERSISTENT_HELPERS */
+    /* PLUGIN_SYNC */
     function pickerModule(require) {
       /* PICKER_MODULE */
     }
@@ -27,10 +28,27 @@ window.__ModuleLoader__.load({
           const sidebarExpansionKey = 'dsh-unified-sidebar-open-workspaces';
           if (gpu) ui.plugin(pickerModule(require));
           const requestFetch = window.fetch.bind(window);
+          const PluginSyncPanel = createPluginSyncPanel({ React, h, requestFetch, requestAccess });
           const listeners = new Set();
           const persistentBridges = new Map();
           let snapshot = { phase: 'loading', hosts: [], error: '', dialog: null, managerNotice: '', recentCreated: null, operationBusy: false, activeTarget: 'mac', remotes: Object.create(null) };
           let created = Object.create(null);
+          const confirmedCreated = new Map();
+          const uncertainCreates = new Map();
+          const uncertainKey = 'dsh-unified-uncertain-session-creates';
+          const creationKey = dialog => dialog.host + ':' + dialog.workspaceId;
+          try {
+            const saved = JSON.parse(sessionStorage.getItem(uncertainKey) || '[]');
+            if (Array.isArray(saved)) for (const dialog of saved.slice(-128)) {
+              if (dialog?.kind === 'session' && validHostId(dialog.host)
+                  && typeof dialog.workspaceId === 'string' && dialog.workspaceId.length > 0 && dialog.workspaceId.length <= 512
+                  && typeof dialog.requestId === 'string' && /^[A-Za-z0-9_-]{16,128}$/.test(dialog.requestId)
+                  && typeof dialog.path === 'string' && typeof dialog.label === 'string') uncertainCreates.set(creationKey(dialog), { ...dialog, uncertain: true });
+            }
+          } catch {}
+          function saveUncertainCreates() {
+            try { sessionStorage.setItem(uncertainKey, JSON.stringify([...uncertainCreates.values()])); return true; } catch { return false; }
+          }
           try {
             const saved = JSON.parse(sessionStorage.getItem(createdKey) || '{}');
             for (const host of Object.keys(saved)) {
@@ -135,6 +153,45 @@ window.__ModuleLoader__.load({
             created[host] = Object.fromEntries(Object.entries(created[host]).slice(-128));
             try { sessionStorage.setItem(createdKey, JSON.stringify(created)); } catch {}
           }
+          function publishCreatedSession(dialog, sessionId) {
+            uncertainCreates.delete(creationKey(dialog)); saveUncertainCreates();
+            markCreated(dialog.host, sessionId);
+            if (!confirmedCreated.has(dialog.host)) confirmedCreated.set(dialog.host, new Map());
+            const row = { sessionId, blank: true, running: false, agentAvailable: false,
+              cwd: dialog.path, updatedAt: Date.now() };
+            const workspace = typeof dialog.workspaceId === 'string' ? {
+              workspaceId: dialog.workspaceId, path: dialog.path,
+              title: dialog.workspaceTitle || dialog.path, sessionIds: [sessionId],
+            } : undefined;
+            confirmedCreated.get(dialog.host).set(sessionId, { row, workspace, until: Date.now() + 60_000 });
+            if (confirmedCreated.get(dialog.host).size > 128) confirmedCreated.get(dialog.host).delete(confirmedCreated.get(dialog.host).keys().next().value);
+            // A successful source-specific create acknowledgement is enough to
+            // show/open this identity. Catalog reconciliation runs separately.
+            const hosts = reconcileCreated(snapshot.hosts, false).map(host => host.id === dialog.host ? { ...host, status: 'ready' } : host);
+            if (typeof dialog.workspaceId === 'string') setWorkspaceExpanded(dialog.host, dialog.workspaceId, true, false);
+            emit({ ...snapshot, hosts, dialog: null,
+              recentCreated: { host: dialog.host, sessionId, workspaceId: dialog.workspaceId },
+              managerNotice: '已在 ' + dialog.label + ' 创建会话，正在打开…' });
+          }
+          function reconcileCreated(hosts, sourceRead = true) {
+            return hosts.map(host => {
+              const pending = confirmedCreated.get(host.id);
+              if (!pending?.size) return host;
+              let items = host.items, workspaces = host.workspaces;
+              for (const [id, value] of pending) {
+                if (value.until <= Date.now() || sourceRead && host.status === 'ready' && host.items.some(item => item.sessionId === id)) {
+                  pending.delete(id); continue;
+                }
+                if (!items.some(item => item.sessionId === id)) items = [...items, value.row];
+                if (value.workspace) {
+                  const own = workspaces.find(workspace => workspace.workspaceId === value.workspace.workspaceId);
+                  if (!own) workspaces = [...workspaces, value.workspace];
+                  else if (!own.sessionIds.includes(id)) workspaces = workspaces.map(workspace => workspace !== own ? workspace : { ...workspace, sessionIds: [...workspace.sessionIds, id] });
+                }
+              }
+              return items === host.items && workspaces === host.workspaces ? host : { ...host, items, workspaces };
+            });
+          }
           function setWorkspaceExpanded(host, workspaceId, expanded, notify = true) {
             const key = host + ':' + workspaceId;
             if (expanded) sidebarExpanded.add(key); else sidebarExpanded.delete(key);
@@ -158,6 +215,24 @@ window.__ModuleLoader__.load({
               workspaceTitle: workspace?.title || workspace?.path || '', requestId,
               directory: null, browsing: false, showHidden: false, error: '', uncertain: false } });
             showManager();
+          }
+          async function createAndOpen(host, workspace) {
+            if (disposed || writeBusy || host.status !== 'ready') return;
+            const previous = uncertainCreates.get(creationKey({ host: host.id, workspaceId: workspace.workspaceId }));
+            if (previous) {
+              emit({ ...snapshot, dialog: previous, managerNotice: '上一次创建结果仍待核对，未发送新的创建请求。' });
+              showManager(); return;
+            }
+            if (uncertainCreates.size >= 128) {
+              emit({ ...snapshot, managerNotice: '待核对的创建请求较多，请先核对已有会话列表。' }); showManager(); return;
+            }
+            let requestId;
+            try { requestId = newRequestId(); }
+            catch (error) { emit({ ...snapshot, managerNotice: error.message }); showManager(); return; }
+            const dialog = { kind: 'session', host: host.id, label: host.label,
+              path: workspace.path, workspaceId: workspace.workspaceId,
+              workspaceTitle: workspace.title || workspace.path || '', requestId };
+            await createFromDialog(undefined, dialog);
           }
           function editDialog(patch) {
             if (!snapshot.dialog || writeBusy) return;
@@ -191,9 +266,9 @@ window.__ModuleLoader__.load({
             if (inFlight) await inFlight;
             return refresh();
           }
-          async function createFromDialog(event) {
+          async function createFromDialog(event, submittedDialog) {
             event?.preventDefault?.();
-            const dialog = snapshot.dialog;
+            const dialog = submittedDialog || snapshot.dialog;
             if (disposed || !dialog || writeBusy || dialog.browsing || dialog.uncertain) return;
             if (dialog.kind === 'workspace' && !absoluteWorkspacePath(dialog.path)) {
               editDialog({ error: '请输入目标主机上的绝对目录路径。' }); return;
@@ -201,6 +276,17 @@ window.__ModuleLoader__.load({
             writeBusy = true;
             emit({ ...snapshot, operationBusy: true, dialog: { ...dialog, error: '' } });
             try {
+              if (dialog.kind === 'session') {
+                // Persist before dispatch so navigation/reload cannot turn an
+                // outstanding create into a second request with another ID.
+                uncertainCreates.set(creationKey(dialog), { ...dialog, uncertain: true,
+                  error: '上次创建已提交，结果尚未确认。请先核对会话列表，勿重复创建。' });
+                if (!saveUncertainCreates()) {
+                  uncertainCreates.delete(creationKey(dialog));
+                  const error = new Error('无法保存创建请求，请允许此页面使用本地存储后重试。');
+                  error.code = 'management/storage-unavailable'; throw error;
+                }
+              }
               const value = await management(dialog.kind === 'workspace' ? 'workspace-create' : 'session-create', {
                 host: dialog.host, requestId: dialog.requestId,
                 ...(dialog.kind === 'workspace' ? { path: dialog.path } : { workspaceId: dialog.workspaceId }),
@@ -211,25 +297,48 @@ window.__ModuleLoader__.load({
               }
               if (dialog.kind === 'session') {
                 if (typeof value?.sessionId !== 'string' || !value.sessionId) { const error = new Error('创建结果尚未确认，请先刷新列表查看。'); error.code = 'management/result-uncertain'; throw error; }
-                markCreated(dialog.host, value.sessionId);
-                setWorkspaceExpanded(dialog.host, dialog.workspaceId, true, false);
+                publishCreatedSession(dialog, value.sessionId);
+                // Do not put a second create or a full multi-host catalog read
+                // between the acknowledged identity and its native controller.
+                try {
+                  await open(dialog.host, value.sessionId, dialog.workspaceId, true);
+                  if (!disposed) emit({ ...snapshot, managerNotice: '已在 ' + dialog.label + ' 打开新会话。' });
+                } catch (error) {
+                  if (!disposed) {
+                    emit({ ...snapshot, managerNotice: '会话已创建；' + (error instanceof Error ? error.message : '暂时无法打开。') + ' 可点击下方「打开刚创建的会话」继续，请勿重复创建。' });
+                    showManager();
+                  }
+                }
+                if (!disposed) void refreshAfterWrite();
               } else {
                 setWorkspaceExpanded(dialog.host, value.workspace.workspaceId, true, false);
+                const hosts = snapshot.hosts.map(host => host.id !== dialog.host ? host : {
+                  ...host, workspaces: host.workspaces.some(workspace => workspace.workspaceId === value.workspace.workspaceId)
+                    ? host.workspaces : [...host.workspaces, value.workspace],
+                });
+                emit({ ...snapshot, hosts, dialog: null, recentCreated: null,
+                  managerNotice: value?.created === false ? '此目录已在工作区列表中。' : '已添加工作区，可以在该目录下新建会话。' });
+                void refreshAfterWrite();
               }
-              await refreshAfterWrite();
-              if (!disposed) emit({ ...snapshot, dialog: null,
-                recentCreated: dialog.kind === 'session' ? { host: dialog.host, sessionId: value.sessionId, workspaceId: dialog.workspaceId } : null,
-                managerNotice: dialog.kind === 'session' ? '已在 ' + dialog.label + ' 新建空白会话。点击「打开」进入。' : value?.created === false ? '此目录已在工作区列表中，已为你刷新。' : '已添加工作区，可以在该目录下新建会话。' });
             } catch (error) {
               if (disposed) return;
               const published = error?.code === 'session/workspace-attach-failed' && error?.details?.sessionId;
               if (typeof published === 'string') {
-                markCreated(dialog.host, published);
-                await refreshAfterWrite();
-                if (!disposed) emit({ ...snapshot, dialog: null, recentCreated: { host: dialog.host, sessionId: published }, managerNotice: '会话已创建，但未能加入工作区。已保留该会话，可在「其他会话」中查看。' });
+                uncertainCreates.delete(creationKey(dialog)); saveUncertainCreates();
+                publishCreatedSession({ ...dialog, workspaceId: undefined }, published);
+                emit({ ...snapshot, managerNotice: '会话已创建，但未能加入工作区。已保留该会话，可在「其他会话」中查看。' });
+                void refreshAfterWrite();
+                showManager();
               } else if (!disposed) {
                 const uncertain = error?.code === 'management/result-uncertain';
-                emit({ ...snapshot, dialog: { ...dialog, error: error instanceof Error ? error.message : '创建未完成，请刷新列表确认结果。', uncertain } });
+                const failedDialog = { ...dialog, error: error instanceof Error ? error.message : '创建未完成，请刷新列表确认结果。', uncertain };
+                if (uncertain && dialog.kind === 'session') {
+                  uncertainCreates.set(creationKey(dialog), failedDialog); saveUncertainCreates();
+                } else if (dialog.kind === 'session') {
+                  uncertainCreates.delete(creationKey(dialog)); saveUncertainCreates();
+                }
+                emit({ ...snapshot, dialog: failedDialog });
+                showManager();
               }
             } finally {
               writeBusy = false;
@@ -254,10 +363,10 @@ window.__ModuleLoader__.load({
                 const data = await response.json();
                 if (!response.ok || data?.ok !== true || !Array.isArray(data.hosts)) throw new Error('工作区列表暂时无法更新。');
                 const ids = new Set();
-                const hosts = data.hosts.map(host => {
+                const hosts = reconcileCreated(data.hosts.map(host => {
                   if (!host || !validHostId(host.id) || ids.has(host.id) || typeof host.label !== 'string' || !Array.isArray(host.workspaces) || !Array.isArray(host.items)) throw new Error('工作区列表暂时无法更新。');
                   ids.add(host.id); return host;
-                });
+                }));
                 if (!ids.has('mac')) throw new Error('本机工作区暂时无法读取。');
                 hosts.sort((a, b) => a.id === 'mac' ? -1 : b.id === 'mac' ? 1 : 0);
                 if (!disposed) { catalogReadAt = Date.now(); emit({ ...snapshot, phase: 'ready', hosts, error: '' }); }
@@ -279,6 +388,13 @@ window.__ModuleLoader__.load({
               snapshot = { ...snapshot, ...(persistentMode ? { activeTarget: 'mac' } : {}) };
               for (const listener of listeners) listener();
             });
+            try {
+              const pendingPanel = JSON.parse(sessionStorage.getItem('dsh-unified-pending-panel') || 'null');
+              if (pendingPanel?.host === selected && pendingPanel.panel === 'plugins') {
+                sessionStorage.removeItem('dsh-unified-pending-panel');
+                ui.layout.selectPanel('plugins');
+              }
+            } catch {}
             refresh();
             const interval = setInterval(refresh, 10_000);
             const onVisible = () => { if (document.visibilityState === 'visible') refresh(); };
@@ -304,15 +420,18 @@ window.__ModuleLoader__.load({
           const titleOf = item => typeof item.projections?.values?.title === 'string' && item.projections.values.title.trim() ? item.projections.values.title : typeof item.projectionValues?.title === 'string' && item.projectionValues.title.trim() ? item.projectionValues.title : typeof item.title === 'string' && item.title.trim() ? item.title : item.blank === true ? '空白会话' : '未命名会话';
           async function open(hostId, sessionId, workspaceId, allowBlank = false) {
             const cached = snapshot.hosts.find(row => row.id === hostId);
-            const knownCurrent = (hostId === selected && Date.now() - catalogReadAt < 10_000 || persistentMode && hostId !== 'mac')
+            const acknowledgement = confirmedCreated.get(hostId)?.get(sessionId);
+            const acknowledged = acknowledgement && acknowledgement.until > Date.now()
+              && roots(cached, true).some(item => item.sessionId === sessionId);
+            const knownCurrent = acknowledged || (hostId === selected && Date.now() - catalogReadAt < 10_000 || persistentMode && hostId !== 'mac')
               && snapshot.phase === 'ready' && cached?.status === 'ready'
               && roots(cached, allowBlank).some(item => item.sessionId === sessionId);
             const latest = knownCurrent ? snapshot.hosts : await refresh();
             const host = latest?.find(row => row.id === hostId);
-            if (!host || host.status !== 'ready' || !roots(host, allowBlank).some(item => item.sessionId === sessionId)) throw new Error('该会话暂时无法打开，请刷新列表后重试。');
+            if (!host || !acknowledged && host.status !== 'ready' || !roots(host, allowBlank).some(item => item.sessionId === sessionId)) throw new Error('该会话暂时无法打开，请刷新列表后重试。');
             if (hostId === selected) {
               if (allowBlank) await ui.uiWorkspace.sessions?.refresh?.();
-              ui.uiWorkspace.openSession(sessionId);
+              await ui.uiWorkspace.openSession(sessionId);
               if (persistentMode) snapshot = { ...snapshot, activeTarget: 'mac' };
               currentSessionId = sessionId;
               saveCurrentSelection();
@@ -336,6 +455,27 @@ window.__ModuleLoader__.load({
             sessionStorage.setItem(pendingKey, JSON.stringify(pending));
             ui.layout.selectPanel(null);
             window.location.reload();
+          }
+          async function openTargetPlugins(hostId) {
+            const host = snapshot.hosts.find(row => row.id === hostId);
+            if (!validHostId(hostId, false) || !host) throw new Error('未配置此远端主机。');
+            if (hostId === selected) { ui.layout.selectPanel('plugins'); return; }
+            let saved;
+            try { saved = JSON.parse(sessionStorage.getItem(selectionKey) || '{}')[hostId]?.sessionId; } catch {}
+            const preferred = snapshot.remotes[hostId]?.sessionId || saved;
+            const row = host.items.find(item => item.sessionId === preferred) || host.items.find(item => typeof item.sessionId === 'string');
+            if (!row) throw new Error('目标尚无可打开的会话，请先在该主机创建一个工作区会话。');
+            saveCurrentSelection();
+            if (persistentMode) {
+              const bridge = bridgeFor(hostId);
+              emit({ ...snapshot, activeTarget: hostId });
+              ui.layout.selectPanel(null);
+              await bridge.openPlugins(row.sessionId);
+            } else {
+              sessionStorage.setItem('dsh-unified-pending-panel', JSON.stringify({ host: hostId, panel: 'plugins' }));
+              sessionStorage.setItem(pendingKey, JSON.stringify({ host: hostId, sessionId: row.sessionId }));
+              window.location.reload();
+            }
           }
           const rowStyle = { border: 0, background: 'transparent', color: 'inherit', cursor: 'pointer', font: 'inherit', textAlign: 'left', width: '100%', minWidth: 0, borderRadius: 6, display: 'flex', alignItems: 'center', gap: 6, boxSizing: 'border-box' };
           function UnifiedTree({ wide = true, expandSidebar, main = false }) {
@@ -378,7 +518,7 @@ window.__ModuleLoader__.load({
                     h('button', { type: 'button', 'data-action': 'open-workspace', disabled: busy || catalog.operationBusy || host.status !== 'ready', title: group.path || label, onClick: () => setWorkspaceExpanded(host.id, group.workspaceId, !expanded), style: { ...rowStyle, flex: 1, padding: '6px 2px', overflow: 'hidden', fontSize: 12, fontWeight: 550 } },
                       h('span', { 'aria-hidden': true, style: { opacity: 0.6 } }, '▱'), h('span', { style: { minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' } }, label)),
                     host.id !== 'mac' && h('span', { 'data-remote-workspace-badge': true, style: { fontSize: 9, whiteSpace: 'nowrap', opacity: 0.6, flexShrink: 0 } }, host.label + ' · 远程'),
-                    h('button', { type: 'button', 'data-action': 'new-session', 'data-host-id': host.id, 'data-workspace-id': group.workspaceId, 'aria-label': '在 ' + host.label + ' 的 ' + label + ' 新建会话', disabled: busy || catalog.operationBusy || host.status !== 'ready', onClick: () => openCreation('session', host, group), style: { ...rowStyle, width: 'auto', flexShrink: 0, fontSize: 11, padding: '5px 3px' } }, '+ 会话')),
+                    h('button', { type: 'button', 'data-action': 'new-session', 'data-host-id': host.id, 'data-workspace-id': group.workspaceId, 'aria-label': '在 ' + host.label + ' 的 ' + label + ' 新建并打开会话', disabled: busy || catalog.operationBusy || host.status !== 'ready', onClick: () => createAndOpen(host, group), style: { ...rowStyle, width: 'auto', flexShrink: 0, fontSize: 11, padding: '5px 3px' } }, '+ 会话')),
                   expanded && (group.members.length ? group.members.map(item => sessionRow(host, group, item)) : h('p', { style: { margin: '3px 4px 7px 27px', fontSize: 11, opacity: 0.55 } }, '暂无会话，点击「+ 会话」创建')));
               }));
               const addButton = (host, label, empty = false) => h('button', { key: host.id + ':' + label, type: 'button', 'data-action': 'new-workspace', 'data-host-id': host.id, 'data-empty-remote-action': empty || undefined, disabled: catalog.operationBusy || host.status !== 'ready', onClick: () => openCreation('workspace', host), style: { ...rowStyle, padding: '8px 5px', fontSize: 11, opacity: host.status === 'ready' ? 0.75 : 0.5 } }, label);
@@ -421,7 +561,7 @@ window.__ModuleLoader__.load({
                         h('button', { type: 'button', disabled: busy, onClick: () => {
                           toggle(groupKey);
                         }, title: group.path || label, style: { ...rowStyle, padding: '6px 4px', fontSize: 12, fontWeight: 550, overflow: 'hidden' } }, h('span', { style: { whiteSpace: 'nowrap', textOverflow: 'ellipsis', overflow: 'hidden' } }, label)),
-                        group.workspaceId !== '__other__' && h('button', { type: 'button', 'data-action': 'new-session', 'data-host-id': host.id, 'data-workspace-id': group.workspaceId, 'aria-label': '在 ' + host.label + ' 的 ' + label + ' 新建会话', disabled: busy || catalog.operationBusy || host.status !== 'ready', onClick: () => openCreation('session', host, group), style: { ...rowStyle, width: 'auto', flexShrink: 0, fontSize: 11, padding: '5px 4px' } }, '+ 会话')),
+                        group.workspaceId !== '__other__' && h('button', { type: 'button', 'data-action': 'new-session', 'data-host-id': host.id, 'data-workspace-id': group.workspaceId, 'aria-label': '在 ' + host.label + ' 的 ' + label + ' 新建并打开会话', disabled: busy || catalog.operationBusy || host.status !== 'ready', onClick: () => createAndOpen(host, group), style: { ...rowStyle, width: 'auto', flexShrink: 0, fontSize: 11, padding: '5px 4px' } }, '+ 会话')),
                       !groupClosed && (group.members.length ? group.members.map(item => sessionRow(host, group, item)) : h('p', { style: { margin: '3px 4px 6px 29px', fontSize: 11, opacity: 0.55 } }, '暂无已有会话')));
                   })));
               })));
@@ -446,18 +586,21 @@ window.__ModuleLoader__.load({
                   h('label', { style: { display: 'flex', alignItems: 'center', gap: 5, fontSize: 11, opacity: 0.7, marginBottom: 6 } }, h('input', { type: 'checkbox', checked: dialog.showHidden, disabled, onChange: event => editDialog({ showHidden: event.target.checked }) }), '显示隐藏目录'),
                   h('div', { style: { maxHeight: 180, overflow: 'auto' } }, dialog.directory.entries.filter(entry => dialog.showHidden || !entry.hidden).map(entry => h('button', { key: entry.path, type: 'button', disabled, title: entry.path, onClick: () => browseDirectory(entry.path), style: { ...rowStyle, padding: '5px 4px', fontSize: 12 } }, '▸ ', entry.name))),
                   dialog.directory.truncated && h('p', { style: { fontSize: 11, opacity: 0.65 } }, '此层目录较多，仅显示一部分；可直接输入完整路径。')))
-                : h('div', null, h('p', { style: { fontSize: 13, margin: '4px 0' } }, dialog.workspaceTitle), h('p', { style: { fontSize: 11, opacity: 0.65, wordBreak: 'break-all' } }, dialog.path), h('p', { style: { fontSize: 12, opacity: 0.7 } }, '使用这台主机已有的默认配置创建空白会话，创建后可在列表中打开。')),
+                : h('div', null, h('p', { style: { fontSize: 13, margin: '4px 0' } }, dialog.workspaceTitle), h('p', { style: { fontSize: 11, opacity: 0.65, wordBreak: 'break-all' } }, dialog.path), h('p', { style: { fontSize: 12, opacity: 0.7 } }, '使用这台主机已有的默认配置创建并打开空白会话。')),
               dialog.error && h('p', { role: 'alert', style: { fontSize: 12, color: '#bc6b15', margin: '10px 0' } }, dialog.error),
               h('div', { style: { display: 'flex', flexWrap: 'wrap', gap: 8, marginTop: 12 } },
                 h('button', { type: 'submit', disabled: disabled || dialog.uncertain, style: buttonStyle }, catalog.operationBusy ? '正在新建…' : workspace ? '新建工作区' : '新建会话'),
                 dialog.uncertain && h('button', { type: 'button', disabled: catalog.operationBusy, onClick: () => refreshAfterWrite(), style: buttonStyle }, '刷新列表查看结果'),
+                dialog.uncertain && dialog.kind === 'session' && h('button', { type: 'button', disabled: catalog.operationBusy, onClick: () => {
+                  uncertainCreates.delete(creationKey(dialog)); saveUncertainCreates();
+                  emit({ ...snapshot, dialog: null, managerNotice: '已解除这次创建的保留状态。若已找到会话，请直接打开；再次点「＋会话」会创建另一个。' });
+                }, style: buttonStyle }, '已核对列表，允许再次新建'),
                 h('button', { type: 'button', disabled: catalog.operationBusy, onClick: closeCreation, style: buttonStyle }, '取消')));
           }
           function WorkspacesPage() {
             const catalog = React.useSyncExternalStore(state.subscribe, state.getSnapshot, state.getSnapshot);
             const recent = catalog.recentCreated;
             const recentHost = recent && catalog.hosts.find(host => host.id === recent.host);
-            const recentRow = recentHost?.items.find(item => item.sessionId === recent.sessionId);
             return h('section', { 'data-remote-workbench': true, style: { padding: 20, maxWidth: 980, margin: '0 auto', width: '100%', height: '100%', minHeight: 0, boxSizing: 'border-box', display: 'flex', flexDirection: 'column', overflow: 'auto' } },
               h('h2', { style: { fontSize: 20, margin: '0 0 8px' } }, '远端工作台'),
               h('p', { style: { opacity: 0.7, fontSize: 13, margin: '0 0 12px' } }, '集中管理本机和已配置远端的目录、工作区与会话。'),
@@ -467,9 +610,13 @@ window.__ModuleLoader__.load({
                 h('p', { style: { fontSize: 12, opacity: 0.7 } }, host.workspaces.length + ' 个工作区 · ' + roots(host, true).length + ' 个会话'),
                 h('button', { type: 'button', disabled: catalog.operationBusy || host.status !== 'ready', 'data-action': 'new-workspace', 'data-host-id': host.id, onClick: () => openCreation('workspace', host), style: { ...rowStyle, width: 'auto', border: '1px solid var(--dsw-alias-border-l2,#cdd1d7)', padding: '7px 10px', fontSize: 12 } }, '+ 新建工作区')))),
               catalog.hosts.length === 1 && h('p', { 'data-host-setup-help': true, style: { fontSize: 12, opacity: 0.7 } }, '尚未配置远端。请在私有 hosts.json 中添加 SSH 隧道地址和短期凭据命令，再重新加载插件。'),
+              h(PluginSyncPanel, { hosts: catalog.hosts, onOpenTarget: async hostId => {
+                try { await openTargetPlugins(hostId); }
+                catch (error) { emit({ ...snapshot, managerNotice: error instanceof Error ? error.message : '目标插件页暂时无法打开。' }); showManager(); }
+              } }),
               h(CreationForm, { catalog }),
               catalog.managerNotice && h('div', { role: 'status', style: { fontSize: 12, padding: '8px 4px 12px', flexShrink: 0 } }, catalog.managerNotice,
-                recentRow && h('button', { type: 'button', onClick: async () => { try { await open(recent.host, recent.sessionId, recent.workspaceId, true); } catch (error) { emit({ ...snapshot, managerNotice: error.message }); } }, style: { ...rowStyle, width: 'auto', marginTop: 7, border: '1px solid var(--dsw-alias-border-l2,#cdd1d7)', padding: '6px 10px' } }, '打开刚创建的会话')),
+                recent && recentHost && h('button', { type: 'button', onClick: async () => { try { await open(recent.host, recent.sessionId, recent.workspaceId, true); } catch (error) { emit({ ...snapshot, managerNotice: error.message }); } }, style: { ...rowStyle, width: 'auto', marginTop: 7, border: '1px solid var(--dsw-alias-border-l2,#cdd1d7)', padding: '6px 10px' } }, '打开刚创建的会话')),
               h('div', { style: { minHeight: 260, flex: '1 0 260px' } }, h(UnifiedTree, { main: true })));
           }
           function syncAppearance() {

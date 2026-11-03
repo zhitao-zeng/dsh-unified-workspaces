@@ -2,11 +2,12 @@ import fs from 'node:fs';
 let template = fs.readFileSync(new URL('./client-main.template.js', import.meta.url), 'utf8');
 const helpers = fs.readFileSync(new URL('./lib/transport.js', import.meta.url), 'utf8').replaceAll('export ', '');
 const persistent = fs.readFileSync(new URL('./persistent-parent.template.js', import.meta.url), 'utf8');
+const pluginSync = fs.readFileSync(new URL('./plugin-sync.template.js', import.meta.url), 'utf8');
 const picker = fs.readFileSync(new URL('./lib/picker.js', import.meta.url), 'utf8');
 const start = picker.indexOf('\t\tvar module =');
 const end = picker.lastIndexOf('\n\t}\n});');
 if (start < 0 || end < start) throw new Error('Unexpected pinned official picker bundle');
-template = template.replace('/* PERSISTENT_HELPERS */', () => persistent).replace('/* ROUTING_HELPERS */', () => helpers).replace(/^[ \t]*\/\* PICKER_MODULE \*\//m, () => picker.slice(start, end));
+template = template.replace('/* PERSISTENT_HELPERS */', () => persistent).replace('/* PLUGIN_SYNC */', () => pluginSync).replace('/* ROUTING_HELPERS */', () => helpers).replace(/^[ \t]*\/\* PICKER_MODULE \*\//m, () => picker.slice(start, end));
 fs.writeFileSync(new URL('./lib/client.js', import.meta.url), template);
 
 const ids = JSON.parse(fs.readFileSync(new URL('./remote-client-ids.json', import.meta.url), 'utf8'));

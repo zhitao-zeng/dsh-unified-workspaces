@@ -15,6 +15,7 @@
     "lib/catalog.js",
     "lib/appearance.js",
     "lib/manage.js",
+    "lib/plugin-sync.js",
     "lib/proxy.js",
     "lib/client.js",
     "lib/boot.js",
