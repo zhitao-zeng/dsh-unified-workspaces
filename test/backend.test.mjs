@@ -9,7 +9,7 @@ import { join } from 'node:path';
 import { WebSocket, WebSocketServer } from 'ws';
 import { parseConfig, loadConfig, validateOrigin, routesForHost } from '../lib/config.js';
 import { validateCredential, createCredentialProvider } from '../lib/credential.js';
-import { createCatalogHandler } from '../lib/catalog.js';
+import { createCatalogHandler, bootReleaseOf } from '../lib/catalog.js';
 import { createManagementHandler } from '../lib/manage.js';
 import { createProxy } from '../lib/proxy.js';
 import { createEmbedService } from '../lib/embed.js';
@@ -41,6 +41,10 @@ test('configuration accepts N explicit loopback sources, rejects command/identit
   assert.deepEqual(parseConfig({ version: 1, hosts: [row('alpha'), row('beta')] }).hosts.map(x => x.id), ['alpha', 'beta']);
   for (const id of ['mac', '__proto__', 'constructor', 'prototype', '../host', 'bad/id', '']) assert.throws(() => parseConfig({ version: 1, hosts: [row(id)] }));
   assert.throws(() => parseConfig({ version: 1, hosts: [row('alpha'), row('alpha')] }));
+  assert.equal(parseConfig({ version: 1, hosts: [row('alpha')] }).hosts[0].remoteTree, false);
+  assert.equal(parseConfig({ version: 1, hosts: [{ ...row('alpha'), remoteTree: true }] }).hosts[0].remoteTree, true);
+  assert.equal(parseConfig({ version: 1, hosts: [{ ...row('alpha'), remoteTree: false }] }).hosts[0].remoteTree, false);
+  for (const remoteTree of ['true', 1, null, {}]) assert.throws(() => parseConfig({ version: 1, hosts: [{ ...row('alpha'), remoteTree }] }));
   assert.equal(parseConfig({ version: 1, hosts: [row('alpha')], legacyHostId: 'alpha' }).legacyHostId, 'alpha');
   for (const legacyHostId of ['missing', '__proto__', 'mac']) assert.throws(() => parseConfig({ version: 1, hosts: [row('alpha')], legacyHostId }));
   assert.throws(() => parseConfig({ version: 1, hosts: [{ ...row('alpha'), credentialCommand: ['python3'] }] }));
@@ -109,7 +113,13 @@ test('two remote Hosts with colliding IDs retain independent catalogs, writes, p
       const server = http.createServer(async (req, res) => {
         seen.push({ url: req.url, headers: req.headers });
         if (req.headers.cookie !== 'cookie-' + id) { req.resume(); res.writeHead(403).end(); return; }
-        if (req.url === '/') return res.writeHead(200, { 'content-type': 'text/html' }).end('<html><head><script>window.__DSH_BOOT__={rev:"test",entries:[],batches:[]};</script></head><body></body></html>');
+        if (req.url === '/') {
+          const graph = id === 'alpha'
+            ? '{"rev":"test","release":{"version":"0.2.1-rc.5","commit":"fixture"},"entries":[],"batches":[]}'
+            : '{"rev":"test","entries":[],"batches":[]}';
+          return res.writeHead(200, { 'content-type': 'text/html' })
+            .end('<html><head><script>globalThis["__DSH_BOOT__"] = ' + graph + ';</script></head><body></body></html>');
+        }
         if (req.url.startsWith('/plugins/')) return res.writeHead(200, { 'content-type': 'text/javascript' }).end('// mock modules');
         const chunks = []; for await (const chunk of req) chunks.push(chunk);
         let message; try { message = JSON.parse(Buffer.concat(chunks).toString()); } catch { res.writeHead(400).end(); return; }
@@ -136,7 +146,7 @@ test('two remote Hosts with colliding IDs retain independent catalogs, writes, p
           });
         });
       });
-      remotes.push({ id, label: 'Worker ' + id, origin, credential: async () => 'cookie-' + id });
+      remotes.push({ id, label: 'Worker ' + id, origin, credential: async () => 'cookie-' + id, remoteTree: id === 'alpha' });
     }
     const catalog = createCatalogHandler({ authorize, connection, gateway, remotes, WebSocketImpl: WebSocket });
     const management = createManagementHandler({ authorize, connection, gateway, remotes });
@@ -180,6 +190,12 @@ test('two remote Hosts with colliding IDs retain independent catalogs, writes, p
     assert.deepEqual(catalogResponse.hosts.map(x => x.id), ['mac', 'alpha', 'beta']);
     assert.deepEqual(catalogResponse.hosts.map(x => x.items[0].sessionId), ['shared-session', 'shared-session', 'shared-session']);
     assert.deepEqual(catalogResponse.hosts.map(x => x.items[0].fixtureHost), ['mac', 'alpha', 'beta']);
+    // 第二棵树闸门的数据来源：只有远端首页暴露 release 时才带上它。
+    assert.deepEqual(catalogResponse.hosts[1].release, { version: '0.2.1-rc.5', commit: 'fixture' });
+    assert.equal(catalogResponse.hosts[1].remoteTree, true);
+    assert.equal(catalogResponse.hosts[2].release, undefined);
+    assert.equal(catalogResponse.hosts[2].remoteTree, false);
+    assert.equal(catalogResponse.hosts[0].remoteTree, undefined);
     assert(!JSON.stringify(catalogResponse).includes('cookie-alpha'));
     assert(!JSON.stringify(catalogResponse).includes(remotes[0].origin));
     assert.equal(localPeers, 0);
@@ -308,4 +324,26 @@ test('IPv6 loopback HTTP proxy strips URL brackets for the socket and retains au
   } finally {
     proxy?.close(); if (parent) await closeServer(parent); await closeServer(remote);
   }
+});
+
+test('boot release parser reads only the boot graph release and treats unknown pages as unknown', () => {
+  const page = value => '<!doctype html><script>globalThis["__DSH_BOOT__"] = ' + JSON.stringify(value) + ';</script>';
+  assert.deepEqual(bootReleaseOf(page({ rev: 'r', release: { version: '0.2.1-rc.5', commit: 'd4db512' }, entries: [], batches: [] })),
+    { version: '0.2.1-rc.5', commit: 'd4db512' });
+  assert.deepEqual(bootReleaseOf(page({ rev: 'r', release: { version: '9.9.9' }, entries: [], batches: [] })), { version: '9.9.9' });
+  // 花括号出现在字符串里不能让扫描提前收尾。
+  assert.deepEqual(bootReleaseOf('<script>globalThis["__DSH_BOOT__"] = {"rev":"a}b{c","release":{"version":"1.0.0","commit":"x"},"entries":[],"batches":[]};</script>'),
+    { version: '1.0.0', commit: 'x' });
+  assert.equal(bootReleaseOf(page({ rev: 'r', entries: [], batches: [] })), null);
+  assert.equal(bootReleaseOf(page({ rev: 'r', release: { version: 42 }, entries: [] })), null);
+  assert.equal(bootReleaseOf('<html>no boot graph here</html>'), null);
+  assert.equal(bootReleaseOf(''), null);
+  assert.equal(bootReleaseOf(undefined), null);
+});
+
+test('remote service rows carry the second-tree opt-in to the catalog', async () => {
+  const { readFile } = await import('node:fs/promises');
+  const source = await readFile(new URL('../lib/index.js', import.meta.url), 'utf8');
+  // 这条接线漏过一次：catalog 读的是服务对象，不是 config 行本身。
+  assert.match(source, /remoteTree: host\.remoteTree === true/);
 });

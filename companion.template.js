@@ -17,7 +17,7 @@ window.__ModuleLoader__.load({
           return !!(list && list.phase === 'ready' && (Object.prototype.hasOwnProperty.call(list.byId || {}, id) || Array.isArray(list.ids) && list.ids.includes(id) || Array.isArray(list.items) && list.items.some(item => item.sessionId === id)));
         }
         async function command(message) {
-          if (!message || typeof message.id !== 'string' || message.id.length > 128 || !['session/open', 'status', 'appearance/reload', 'plugin-manager/open'].includes(message.type)) return;
+          if (!message || typeof message.id !== 'string' || message.id.length > 128 || !['session/open', 'session/new', 'status', 'appearance/reload', 'plugin-manager/open'].includes(message.type)) return;
           if (requestInFlight && message.type === 'session/open') { send({ id: message.id, ok: false, error: '远程工作区正在打开会话，请稍后重试。' }); return; }
           try {
             if (message.type === 'session/open') {
@@ -28,6 +28,17 @@ window.__ModuleLoader__.load({
               if (!knownSession(message.sessionId)) throw new Error('远端中没有找到此会话，请刷新列表后重试。');
               ctx.layout.selectPanel(null);
               await ctx.uiWorkspace.openSession(message.sessionId);
+              document.querySelector('[contenteditable="true"],textarea')?.focus?.();
+            } else if (message.type === 'session/new') {
+              // The parent's "new session" while this source is shown. An absent
+              // workspace keeps the native no-argument action (the titlebar
+              // button); a named one must be a Workspace identity this frame
+              // already knows, and only the frame still performs the creation.
+              const workspaceId = message.workspaceId;
+              if (workspaceId !== undefined && (typeof workspaceId !== 'string' || !/^[A-Za-z0-9][A-Za-z0-9_-]{0,63}$/.test(workspaceId))) throw new Error('工作区标识无效。');
+              ctx.layout.selectPanel(null);
+              if (workspaceId === undefined) ctx.uiWorkspace.startSession();
+              else ctx.uiWorkspace.startSession(workspaceId);
               document.querySelector('[contenteditable="true"],textarea')?.focus?.();
             } else if (message.type === 'plugin-manager/open') {
               ctx.layout.selectPanel('plugins');

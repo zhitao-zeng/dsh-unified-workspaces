@@ -13,7 +13,8 @@ Unified local and SSH remote workspaces for DeepSeek Harness. Each remote keeps 
 - 「远端工作台」查看各主机状态、工作区与会话，浏览目录、新建工作区和新建会话。
 - 工作区行的「＋会话」一次创建并打开所属主机的新会话；成功回执立即生效，列表在后台协调更新。
 - 工作台内选择 Mac 插件、查看目标精确版本计划，再通过官方插件管理接口同步安装包。
-- 桌面/本机浏览器为每台远端保留一个按需加载的原生页面。跨主机往返只改变显示，不重建已经连接的页面。
+- 桌面/本机浏览器按需打开远端原生界面。启用 `remoteTree` 且两端 DSH release 一致时，同机切会话复用界面，回到本机或切换主机时释放远端连接；远端运行中的任务继续执行，草稿按会话保留。版本未知或不匹配时使用兼容嵌入页面。
+- 远端界面只启动固定版本验证过的原生模块，避免加载依赖本机后台的桌面插件。重新打开远端界面时读取最新模块图。
 - 远端使用自己的原生会话控制器、工作目录、模型与工具；不会把远端会话 ID 交给本机控制器。
 - 外观和语言复用本机设置；模型、凭据和其他设置仍属于各自服务器。
 - 常驻远端页面继承外层 App 当前实际语言；外层选择“跟随系统”时也不会误用嵌入浏览器的默认语言。
@@ -35,7 +36,7 @@ npm run build
 npm test
 npm pack
 
-dsh plugin --profile desktop add "file:$(pwd)/zhitao-zeng-dsh-unified-workspaces-0.5.1.tgz"
+dsh plugin --profile desktop add "file:$(pwd)/zhitao-zeng-dsh-unified-workspaces-0.5.11.tgz"
 ```
 
 然后重新打开 DSH App。若 `dsh` 不在 PATH，使用官方桌面 App 自带的 `Contents/Resources/runtime/cli/bin/dsh`；按实际 App 安装目录填写其完整路径。
@@ -109,6 +110,10 @@ python3 scripts/ssh-browser-cookie.py \
 ```
 
 `--service your-existing.service` 可选，用于核对已经运行的 systemd 用户服务；不会启动服务。辅助程序不会创建缺失的 DSH Home 或授权材料。
+
+每台主机可选 `"remoteTree": true`：开启**同文档远端视图**——该机器的会话直接渲染在当前窗口主区域，不再用 iframe。切换机器时释放远端视图、切回重建；界面切走不会停止远端任务（停止仍需你显式触发）。默认关闭，保持 iframe 兼容视图。
+
+启用前插件会读取远端首页里的 `__DSH_BOOT__.release`，只有「版本 + commit」与本机一致才启用第二棵树；读不到版本或版本不一致时自动回退 iframe，不会因为版本差异把不兼容的远端界面硬塞进当前窗口。
 
 配置中的 `credentialCommand` 不加 `--check`：它通过私有 stdout 返回 `{origin, active, cookieName, cookieValue}`，由插件在内存中捕获。只用 argv 数组执行，不经过 shell；不要把真实 Key 或 cookie 写进仓库、命令参数或日志。也可以替换成符合相同契约的自有凭据程序。
 

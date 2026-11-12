@@ -64,6 +64,10 @@ test('local and two remote workspaces with identical session IDs retain independ
   for(const panel of ['settings','dsh-unified-host']){panelId=panel;assert(walk(overlay()).filter(n=>n.props['data-persistent-remote-overlay']).every(n=>n.props.style.display==='none'));assert.deepEqual(walk(overlay()).filter(n=>n.type==='iframe').map(n=>n.props.src),stableSources);}
   panelId=null;collapsed=true;find(overlay(),n=>n.props['data-action']==='expand-parent-workspaces').props.onClick();assert.equal(toggleCount,1);collapsed=false;
   await assert.rejects(env.fixtureOpen('unconfigured','shared-session'),/暂时无法打开/);assert.equal(requests.filter(r=>r.path.includes('/hosts/unconfigured/')).length,0);
+  // The sidebar "+" now asks the Host on screen to create natively; put Mac
+  // back on screen so this exercise still covers the management fallback for
+  // a source that is not currently loaded.
+  await open('mac');
   blockCatalog=true;
   const createButton=find(project('beta'),n=>n.props['data-action']==='new-session');
   const first=createButton.props.onClick();const duplicate=createButton.props.onClick();

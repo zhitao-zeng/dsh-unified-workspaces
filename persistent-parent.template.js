@@ -104,6 +104,17 @@ function createPersistentEmbed({ hostId, fetch: requestFetch, changed, getLocale
     attach(element) { frame = element; },
     async open(sessionId) { await ensure(sessionId); if (disposed) return; const result = await request('session/open', { sessionId }); frame?.focus?.(); return result; },
     async openPlugins(sessionId) { await ensure(sessionId); if (disposed) return; const result = await request('plugin-manager/open'); frame?.focus?.(); return result; },
+    // The sidebar may name the Workspace it wants the new Session in; the frame
+    // validates the identity and still owns the actual creation.
+    async startSession(workspaceId, fallbackSessionId) {
+      // The frame must exist before it can create anything; the caller passes the
+      // Session it is showing as the bootstrap identity when the frame is cold.
+      if (!(metadata && !expired())) await ensure(fallbackSessionId);
+      if (disposed) return;
+      const result = await request('session/new', typeof workspaceId === 'string' && workspaceId ? { workspaceId } : {});
+      frame?.focus?.();
+      return result;
+    },
     appearance(css, locale) { if (ready) request('appearance/reload', { css, ...(locale ? { locale } : {}) }).catch(() => {}); },
     focus() { frame?.focus?.(); },
     dispose() {

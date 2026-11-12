@@ -60,7 +60,7 @@ test('published source contains no literal secrets, home directories, or deploym
 
 test('package ships reusable source and licenses while ignoring runtime material',async()=>{
   const pkg=JSON.parse(await readFile(path.join(root,'package.json'),'utf8'));
-  assert.equal(pkg.engines.dsh,'0.2.1-rc.5');
+  assert.equal(pkg.engines.dsh,'>=0.2.1-rc.5 <0.3.0-0');
   assert.ok(Array.isArray(pkg.files));
   assert.ok(!pkg.files.some(value=>value==='.'||value==='*'||value.includes('**')||value.startsWith('test/')));
   for(const member of pkg.files){

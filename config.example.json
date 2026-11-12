@@ -8,11 +8,16 @@
       "credentialCommand": [
         "/usr/bin/python3",
         "/ABSOLUTE/PATH/dsh-unified-workspaces/scripts/ssh-browser-cookie.py",
-        "--ssh-host", "worker-a",
-        "--dsh-home", "/home/your-user/.dsh",
-        "--origin", "http://127.0.0.1:43081",
-        "--remote-port", "3080"
-      ]
+        "--ssh-host",
+        "worker-a",
+        "--dsh-home",
+        "/home/your-user/.dsh",
+        "--origin",
+        "http://127.0.0.1:43081",
+        "--remote-port",
+        "3080"
+      ],
+      "remoteTree": true
     },
     {
       "id": "worker-b",
@@ -21,10 +26,14 @@
       "credentialCommand": [
         "/usr/bin/python3",
         "/ABSOLUTE/PATH/dsh-unified-workspaces/scripts/ssh-browser-cookie.py",
-        "--ssh-host", "worker-b",
-        "--dsh-home", "/home/your-user/.dsh",
-        "--origin", "http://127.0.0.1:43082",
-        "--remote-port", "3080"
+        "--ssh-host",
+        "worker-b",
+        "--dsh-home",
+        "/home/your-user/.dsh",
+        "--origin",
+        "http://127.0.0.1:43082",
+        "--remote-port",
+        "3080"
       ]
     }
   ]

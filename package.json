@@ -1,6 +1,6 @@
 {
   "name": "@zhitao-zeng/dsh-unified-workspaces",
-  "version": "0.5.1",
+  "version": "0.5.13",
   "description": "DSH 本机与多台 SSH 远端统一工作区、原生会话和常驻视图",
   "private": true,
   "type": "module",
@@ -37,7 +37,7 @@
   ],
   "engines": {
     "node": ">=24",
-    "dsh": "0.2.1-rc.5"
+    "dsh": ">=0.2.1-rc.5 <0.3.0-0"
   },
   "dependencies": {
     "ws": "8.22.0"
