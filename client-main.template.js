@@ -756,7 +756,8 @@ window.__ModuleLoader__.load({
                   uncertainCreates.delete(creationKey(dialog)); saveUncertainCreates();
                 }
                 emit({ ...snapshot, dialog: failedDialog });
-                showManager();
+                if (typeof onNotice === 'function') notify(failedDialog.error);
+                else showManager();
               }
             } finally {
               writeBusy = false;
@@ -1226,7 +1227,18 @@ window.__ModuleLoader__.load({
                   }
                   if (persistentMode && catalog.activeTarget === host.id) {
                     ui.layout.selectPanel(null);
-                    await bridgeFor(host.id).startSession(group.workspaceId, catalog.remotes[host.id]?.sessionId || currentSessionId);
+                    // 第二棵树在屏时，直接用它的原生 uiWorkspace 新建，避免去 bootstrap iframe
+                    const tree = remoteTrees && remoteTrees.trees.get(host.id);
+                    const treeWorkspace = tree && tree.handle && tree.handle.uiWorkspace;
+                    if (treeWorkspace && typeof treeWorkspace.startSession === 'function') {
+                      treeWorkspace.startSession(group.workspaceId);
+                      document.querySelector('[contenteditable="true"],textarea')?.focus?.();
+                      return;
+                    }
+                    await Promise.race([
+                      bridgeFor(host.id).startSession(group.workspaceId, catalog.remotes[host.id]?.sessionId || currentSessionId),
+                      new Promise((_, reject) => setTimeout(() => reject(new Error('远端界面响应超时，请重试。')), 20000)),
+                    ]);
                     return;
                   }
                   await createAndOpen(host, group, say);

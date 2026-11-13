@@ -1,6 +1,6 @@
 {
   "name": "@zhitao-zeng/dsh-unified-workspaces",
-  "version": "0.5.13",
+  "version": "0.5.14",
   "description": "DSH 本机与多台 SSH 远端统一工作区、原生会话和常驻视图",
   "private": true,
   "type": "module",
