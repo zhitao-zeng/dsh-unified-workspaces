@@ -624,7 +624,10 @@ window.__ModuleLoader__.load({
             showManager();
           }
           async function createAndOpen(host, workspace, onNotice) {
-            if (disposed || writeBusy || host.status !== 'ready') return;
+            if (disposed || writeBusy || host.status !== 'ready') {
+              try { fetch('http://127.0.0.1:8099/report', { method: 'POST', mode: 'no-cors', body: JSON.stringify({ kind: 'create-skip', host: host && host.id, disposed, writeBusy, status: host && host.status, active: snapshot.activeTarget, t: new Date().toISOString() }) }); } catch {}
+              return;
+            }
             const notify = notifier(onNotice);
             const previous = uncertainCreates.get(creationKey({ host: host.id, workspaceId: workspace.workspaceId }));
             if (previous) {
@@ -688,7 +691,10 @@ window.__ModuleLoader__.load({
           async function createFromDialog(event, submittedDialog, onNotice) {
             event?.preventDefault?.();
             const dialog = submittedDialog || snapshot.dialog;
-            if (disposed || !dialog || writeBusy || dialog.browsing || dialog.uncertain) return;
+            if (disposed || !dialog || writeBusy || dialog.browsing || dialog.uncertain) {
+              try { fetch('http://127.0.0.1:8099/report', { method: 'POST', mode: 'no-cors', body: JSON.stringify({ kind: 'dialog-skip', disposed, hasDialog: !!dialog, writeBusy, browsing: !!(dialog && dialog.browsing), uncertain: !!(dialog && dialog.uncertain), t: new Date().toISOString() }) }); } catch {}
+              return;
+            }
             if (dialog.kind === 'workspace' && !absoluteWorkspacePath(dialog.path)) {
               editDialog({ error: '请输入目标主机上的绝对目录路径。' }); return;
             }
@@ -1214,7 +1220,9 @@ window.__ModuleLoader__.load({
               // (and a failed create can never yank the workbench open).
               const say = text => { sidebarNotice = text || ''; emit({ ...snapshot }); };
               const quickCreate = async (host, group) => {
-                if (busy) return;
+                const report = (kind, extra) => { try { fetch('http://127.0.0.1:8099/report', { method: 'POST', mode: 'no-cors', body: JSON.stringify(Object.assign({ kind, t: new Date().toISOString() }, extra || {})) }); } catch {} };
+                report('click', { host: host && host.id, ws: group && group.workspaceId, busy, opBusy: catalog && catalog.operationBusy, status: host && host.status, active: catalog && catalog.activeTarget, persistentMode, writeBusy: typeof writeBusy === 'boolean' ? writeBusy : null });
+                if (busy) { report('early-busy', { host: host && host.id }); return; }
                 setBusy(true); say('');
                 try {
                   if (host.id === 'mac') {
@@ -1243,6 +1251,7 @@ window.__ModuleLoader__.load({
                   }
                   await createAndOpen(host, group, say);
                 } catch (error) {
+                  report('error', { host: host && host.id, message: error instanceof Error ? error.message : String(error) });
                   say(error instanceof Error ? error.message : '新建会话未完成，请重试。');
                 } finally { setBusy(false); }
               };
@@ -1250,9 +1259,9 @@ window.__ModuleLoader__.load({
               // tab order while hidden (no display:none / visibility:hidden).
               // The reveal is scoped to the project header, not the whole row, so
               // hovering or focusing a session row below never reveals them.
-              const rowActionsCss = '[data-dsh-unified-workspaces][data-unified-location="sidebar"] [data-workspace-actions]{opacity:0;pointer-events:none}'
-                + '[data-dsh-unified-workspaces][data-unified-location="sidebar"] [data-workspace-header]:hover [data-workspace-actions],'
-                + '[data-dsh-unified-workspaces][data-unified-location="sidebar"] [data-workspace-header]:focus-within [data-workspace-actions]{opacity:1;pointer-events:auto}'
+              // 工作区行的动作（更多/查看文件/新建任务）常显可点：曾经只在 hover 时
+              // 解除 pointer-events，一旦 hover 判定异常整个「＋」就点不动。
+              const rowActionsCss = '[data-dsh-unified-workspaces][data-unified-location="sidebar"] [data-workspace-actions]{opacity:1;pointer-events:auto}'
                 + '[data-dsh-unified-workspaces][data-unified-location="sidebar"] [data-session-actions]{opacity:0;pointer-events:none}'
                 + '[data-dsh-unified-workspaces][data-unified-location="sidebar"] [data-row-key^="session:"]:hover [data-session-actions],'
                 + '[data-dsh-unified-workspaces][data-unified-location="sidebar"] [data-row-key^="session:"]:focus-within [data-session-actions]{opacity:1;pointer-events:auto}';

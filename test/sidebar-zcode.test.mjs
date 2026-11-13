@@ -145,9 +145,7 @@ test('the project row offers two 24x24 actions and "查看文件" is inert',asyn
   assert.equal(p.requests.length,before,'view-files must not dispatch anything');
   // The reveal rules are CSS-only so the buttons stay in the tab order.
   const cssText=walk(tree).filter(n=>n.type==='style'&&!n.props['data-sidebar-shell-style']).map(n=>n.children.join('')).join('');
-  assert.match(cssText,/\[data-workspace-actions\]\{opacity:0;pointer-events:none\}/);
-  assert.match(cssText,/\[data-workspace-header\]:hover \[data-workspace-actions\]/);
-  assert.match(cssText,/\[data-workspace-header\]:focus-within \[data-workspace-actions\]/);
+  assert.match(cssText,/\[data-workspace-actions\]\{opacity:1;pointer-events:auto\}/);
   assert.ok(!cssText.includes('[data-flat-workspace-row]:hover'),'the whole row must not reveal the actions');
   assert.ok(!cssText.includes('[data-flat-workspace-row]:focus-within'),'session-row focus must not reveal the actions');
   // The header owns the actions; its subtree holds no session rows.
